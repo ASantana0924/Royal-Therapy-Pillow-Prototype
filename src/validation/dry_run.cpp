@@ -23,8 +23,9 @@
 //   - ACC is the timing-sensitive I2C stream
 //   - BME688 uses asynchronous beginReading/endReading so the I2C mutex
 //     is NOT held during the gas-heater/measurement interval
-//   - Audio is buffered and WAV headers are finalized explicitly
-//   - WAV segments rotate on elapsed segment time (1 hour), not file size
+//   - Audio is written as raw PCM (no header) — every byte is immediately valid
+//   - PCM segments rotate on elapsed segment time (1 hour), not file size
+//   - Convert PCM to WAV after collection using audit/pcm_to_wav.py
 // ============================================================
 
 // -------------------- Pin definitions -----------------------
@@ -41,7 +42,7 @@
 
 // -------------------- Session configuration -----------------
 // Update these before each planned night.
-static const char* NIGHT        = "n02";
+static const char* NIGHT        = "n01";
 static const char* PILLOW_MODEL = "3-layer memory foam";
 static const float ROOM_TEMP    = 24.0f;
 static const char* CONDITIONS   = "no partner present, window closed, fan off";
@@ -195,7 +196,9 @@ static void buildIndexFilename(char* buf, size_t len) {
 }
 
 static void buildWavFilename(uint8_t segment, char* buf, size_t len) {
-  snprintf(buf, len, "/PILLOW_%s_%04d%02d%02d_MIC_%s_h%02u.wav",
+  // PCM format — no header, every byte written is immediately valid audio.
+  // Convert to WAV after collection using audit/pcm_to_wav.py
+  snprintf(buf, len, "/PILLOW_%s_%04d%02d%02d_MIC_%s_h%02u.pcm",
            UNIT_ID, sessionYear, sessionMonth, sessionDay, NIGHT, segment);
 }
 
@@ -357,13 +360,10 @@ static bool closeCurrentWav(bool writeIndexRow) {
   const uint64_t durationMs = (endEpochMs >= segmentStartEpochMs)
                             ? (endEpochMs - segmentStartEpochMs) : 0;
 
-  bool headerOk = patchWavHeader(wavFile, finalBytes);
+  // PCM — no header to patch. Just flush and close.
   wavFile.flush();
   wavFile.close();
-
-  if (!headerOk) {
-    logError("Failed to patch final WAV header.");
-  }
+  bool headerOk = true;
 
   if (writeIndexRow && indexFile) {
     char wavName[96];
@@ -388,7 +388,7 @@ static bool closeCurrentWav(bool writeIndexRow) {
     (void)iso;
   }
 
-  Serial.printf("WAV h%02u closed: %.2f MB, %lu samples\n",
+  Serial.printf("PCM h%02u closed: %.2f MB, %lu samples\n",
                 wavSegmentIndex,
                 finalBytes / 1048576.0,
                 (unsigned long)finalSamples);
@@ -425,20 +425,9 @@ static bool openWavSegment() {
   segmentStartMillis = millis();
   segmentStartSampleCount = totalMicSamples;
 
-  if (!writeWavHeader(wavFile, 0)) {
-    logError("Failed to write WAV header.");
-    wavFile.close();
-    return false;
-  }
-  wavFile.flush();
-
-  if (wavFile.size() != 44) {
-    logError("WAV header verification failed.");
-    wavFile.close();
-    return false;
-  }
-
-  Serial.printf("WAV h%02u opened: %s\n", wavSegmentIndex, wavName);
+  // PCM — no header written. First byte is audio data.
+  // File is valid from the moment it opens — no close dependency.
+  Serial.printf("PCM h%02u opened: %s\n", wavSegmentIndex, wavName);
   lastWavPatchMillis = millis();
   segmentOpenMs = millis();
   return true;
@@ -881,7 +870,7 @@ static bool maybeRotateWav(uint32_t nowMs) {
   if (sessionRemaining <= MIN_SEGMENT_REMAINING_MS) return false;
 
   if (wavSegmentIndex >= 9) {
-    logError("Cannot create another WAV segment: segment limit reached.");
+    logError("Cannot create another PCM segment: segment limit reached.");
     return false;
   }
 
@@ -890,20 +879,8 @@ static bool maybeRotateWav(uint32_t nowMs) {
   return openWavSegment();
 }
 
-static void periodicWavPatch(uint32_t nowMs) {
-  if (!wavFile) return;
-  if ((uint32_t)(nowMs - lastWavPatchMillis) < WAV_PATCH_INTERVAL_MS) return;
-
-  lastWavPatchMillis = nowMs;
-  flushStageBuffer();
-  if (patchWavHeader(wavFile, segmentBytesWritten)) {
-    wavFile.flush();
-    Serial.printf("WAV h%02u header patched at %.2f MB.\n",
-                  wavSegmentIndex, segmentBytesWritten / 1048576.0);
-  } else {
-    logWarn("Periodic WAV header patch failed.");
-  }
-}
+// periodicWavPatch removed — not needed with PCM format.
+// PCM has no header dependency; every byte written is immediately valid.
 
 // ============================================================
 // Startup verification
@@ -978,7 +955,7 @@ static bool writeMetadataJson(uint64_t endEpochMs) {
 
   f.println("  \"sensors\": {");
   f.printf("    \"ADXL345\": {\"stream\": \"ACC\", \"rate_hz\": %d, \"range_g\": 16},\n", SENSOR_RATE_ACC);
-  f.printf("    \"INMP441\": {\"stream\": \"MIC\", \"rate_hz\": %d, \"bits\": 16, \"channels\": 1},\n", SENSOR_RATE_MIC);
+  f.printf("    \"INMP441\": {\"stream\": \"MIC\", \"rate_hz\": %d, \"bits\": 16, \"channels\": 1, \"format\": \"pcm_s16le\"},\n", SENSOR_RATE_MIC);
   f.printf("    \"BME688\": {\"stream\": \"ENV\", \"rate_hz\": %d, \"bsec\": false, \"async_measurement\": true}\n", SENSOR_RATE_ENV);
   f.println("  },");
 
