@@ -1,0 +1,58 @@
+============================================================
+MIC STREAM AUDIT — ALL NIGHTS
+============================================================
+
+Auditing n01 (3-layer memory foam)...
+  Segments found:    7 / 7
+  Missing hours:     None
+  Empty segments:    0 
+  Unpatched headers: 0 
+  Total size:        384.63 MB
+  Total duration:    25200s (7.00 hrs)
+  Format OK:         True
+
+  ── Audio quality ──────────────────────
+  RMS mean:          0.12185 (min 0.08940 / max 0.14897)
+  Peak max:          1.00003
+  Silence mean:      6.81%
+  DC offset max:     0.000184
+  Total clicks:      161
+  Dynamic range:     24.17 dB
+
+  ── Index CSV ──────────────────────────
+  Index present:     True
+  Index rows:        7
+  Index OK:          True
+
+  Per-segment breakdown:
+    h       MB   Dur(s)       RMS     Peak    Sil%   Clicks   DR(dB)  Notes
+  -------------------------------------------------------------------------------------
+  h00    54.95     3600   0.14897  1.00003     4.9        0    16.36  Clipping detected
+  h01    54.95     3600   0.11491  1.00003     6.9       11    25.07  Clipping detected
+  h02    54.95     3600   0.08940  1.00003     8.6      111    26.23  Clipping detected; High click count: 111
+  h03    54.95     3600   0.14106  1.00003     6.8       15    25.93  Clipping detected
+  h04    54.95     3600   0.12327  1.00003     5.6        2    23.07  Clipping detected
+  h05    54.95     3600   0.11515  1.00003     7.1       21    25.70  Clipping detected
+  h06    54.93     3598   0.12019  1.00003     7.7        1    26.80  Clipping detected
+
+  Status:            OK
+  Notes:             Clean
+
+============================================================
+MIC PER-PILLOW COMPARISON
+============================================================
+
+3-layer memory foam (nights: n01)
+  Avg total size:      384.63 MB/night
+  Avg total duration:  7.00 hrs/night
+  Avg RMS:             0.12185
+  Avg silence:         6.81%
+  Avg total clicks:    161 clicks/night
+  Avg dynamic range:   24.17 dB
+  Total empty segs:    0
+  Total missing hrs:   0
+  Total unpatched:     0
+
+MIC night audit saved to:   C:\Users\aleja\Royal Therapy\pillow-prototype\data\test\mic_audit.csv
+MIC segment audit saved to: C:\Users\aleja\Royal Therapy\pillow-prototype\data\test\mic_audit_segments.csv
+============================================================

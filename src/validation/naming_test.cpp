@@ -5,7 +5,7 @@
 #include <RTClib.h>
 #include "../../src/logging/session.h"
 
-#define SD_CS    5
+#define SD_CS    4
 #define SDA_PIN  21
 #define SCL_PIN  22
 

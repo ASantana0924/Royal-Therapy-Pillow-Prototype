@@ -2,13 +2,12 @@
 #include <SPI.h>
 #include <SD.h>
 
-#define SD_CS 5
+#define SD_CS   4
+#define SD_SCK  18
+#define SD_MOSI 23
+#define SD_MISO 19
 
 // Expected storage per night at configured rates
-// Audio: 16kHz * 2 bytes * 3600s = ~115 MB/hr, ~920 MB/night (8hrs)
-// ACC:   100Hz * ~30 bytes/row * 3600s * 8hrs = ~86 MB/night
-// ENV:   1Hz   * ~60 bytes/row * 3600s * 8hrs = ~1.7 MB/night
-// Total estimate: ~1 GB/night (audio dominates)
 #define NIGHTS_TARGET     10
 #define EST_GB_PER_NIGHT  1.0
 
@@ -20,10 +19,31 @@ void setup() {
   Serial.println("MICROSD CAPACITY CHECK");
   Serial.println("=============================");
 
-  SPI.begin(18, 19, 23, SD_CS);
+  // ── Force SPI pins to known idle state ───────────────────
+  // Clears any residual state from previous sketches
+  // or the boot process before SD library takes over
+  pinMode(SD_CS,   OUTPUT); digitalWrite(SD_CS,   HIGH);
+  pinMode(SD_SCK,  OUTPUT); digitalWrite(SD_SCK,  HIGH);
+  pinMode(SD_MOSI, OUTPUT); digitalWrite(SD_MOSI, HIGH);
+  pinMode(SD_MISO, INPUT);
+  delay(1000);
 
-  if (!SD.begin(SD_CS)) {
-    Serial.println("FAIL — microSD not mounted.");
+  // ── Mount with retry ─────────────────────────────────────
+  SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  bool sdMounted = false;
+  for (int attempt = 1; attempt <= 5; attempt++) {
+    Serial.printf("SD mount attempt %d/5...\n", attempt);
+    if (SD.begin(SD_CS, SPI, 4000000)) {
+      sdMounted = true;
+      break;
+    }
+    Serial.println("Mount failed — retrying in 2 seconds.");
+    SD.end();
+    delay(2000);
+    SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  }
+  if (!sdMounted) {
+    Serial.println("FAIL — microSD not mounted after 5 attempts.");
     Serial.println("Check wiring and FAT32 format.");
     while (true);
   }
@@ -47,9 +67,12 @@ void setup() {
 
   Serial.println();
   Serial.println("--- Storage ---");
-  Serial.print("Total size:  "); Serial.print(cardSizeGB, 2); Serial.println(" GB");
-  Serial.print("Used:        "); Serial.print(usedGB,     2); Serial.println(" GB");
-  Serial.print("Free:        "); Serial.print(freeGB,     2); Serial.println(" GB");
+  Serial.print("Total size:  "); Serial.print(cardSizeGB, 2);
+  Serial.println(" GB");
+  Serial.print("Used:        "); Serial.print(usedGB, 2);
+  Serial.println(" GB");
+  Serial.print("Free:        "); Serial.print(freeGB, 2);
+  Serial.println(" GB");
 
   // ── Capacity check ───────────────────────────────────────
   float requiredGB = NIGHTS_TARGET * EST_GB_PER_NIGHT;
@@ -70,14 +93,13 @@ void setup() {
     Serial.println(" GB more.");
   }
 
-  // ── Write/read integrity test ────────────────────────────
+  // ── Write / read integrity test ──────────────────────────
   Serial.println();
   Serial.println("--- Write / read integrity test ---");
 
   const char* testPath = "/sd_test.txt";
   const char* testData = "PILLOW SD INTEGRITY CHECK OK";
 
-  // Write
   File wf = SD.open(testPath, FILE_WRITE);
   if (!wf) {
     Serial.println("FAIL — could not open test file for write.");
@@ -87,7 +109,6 @@ void setup() {
   wf.flush();
   wf.close();
 
-  // Read back
   File rf = SD.open(testPath);
   if (!rf) {
     Serial.println("FAIL — could not open test file for read.");
@@ -100,7 +121,6 @@ void setup() {
   }
   rf.close();
 
-  // Trim newline for comparison
   for (int j = 0; j < 64; j++) {
     if (readBuf[j] == '\n' || readBuf[j] == '\r') {
       readBuf[j] = '\0';
@@ -118,13 +138,16 @@ void setup() {
     Serial.print("Got:      "); Serial.println(readBuf);
   }
 
-  // Clean up test file
   SD.remove(testPath);
 
   Serial.println();
   Serial.println("=============================");
   Serial.println("SD check complete.");
   Serial.println("=============================");
+
+  // Clean teardown so next flash gets clean SPI state
+  SD.end();
+  SPI.end();
 }
 
 void loop() {}

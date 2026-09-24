@@ -2,7 +2,7 @@
 #include <SPI.h>
 #include <SD.h>
 
-#define SD_CS 5
+#define SD_CS 4
 
 File logFile;
 unsigned long startMs = 0;

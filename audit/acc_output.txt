@@ -1,0 +1,55 @@
+============================================================
+ACC STREAM AUDIT — ALL NIGHTS
+============================================================
+
+Auditing n01 (3-layer memory foam)...
+  Raw backward jumps (unfiltered): 0
+  File:              PILLOW_01_20260913_ACC_n01.csv
+  File size:         151,728,066 bytes
+  Rows (total):      2,519,352
+  Rows (clean):      2,519,352
+  Duration:          25200s (7.00 hrs)
+  Effective Hz:      100.0 Hz (100.0% of 100 Hz spec)
+  Mean gap:          10.0 ms
+  Gaps >40ms:        44,989 (1.8% of samples)
+  Gaps >200ms:       11
+  Max gap:           296 ms
+
+  ── Timestamp quality ──────────────────
+  Backward jumps:    0  OK
+  Corrupt ISO rows:  0  OK
+  Corrupt epoch rows:0  (0.00%)  OK
+
+  ── Signal quality ─────────────────────
+  Mag mean:          0.9591 g
+  Mag std:           0.0114 g
+  Mag max:           2.9252 g
+  Bias error:        0.0409 g (OK)
+  X/Y/Z std:         0.1506 / 0.0986 / 0.0358 g
+  Micro-movement:    1.175% >2s from mean
+
+  ── Movement events ────────────────────
+  Events:            15
+  Total active:      2.0s (0.01%)
+  Avg duration:      0.14s
+  Max duration:      0.23s
+
+  Status:            WARN
+  Notes:             11 severe gaps >200ms; Clean row count: 100.0% of theoretical 100 Hz
+
+============================================================
+ACC PER-PILLOW COMPARISON
+============================================================
+
+3-layer memory foam (nights: n01)
+  Avg effective Hz:        100.0
+  Avg clean rows:          2,519,352
+  Avg corrupt epoch rows:  0
+  Avg corrupt epoch %:     0.00%
+  Avg bias error:          0.0409 g
+  Avg magnitude std:       0.0114 g
+  Avg movement events:     15.0 events/night
+  Avg movement total:      2.0s/night
+
+ACC audit saved to: C:\Users\aleja\Royal Therapy\pillow-prototype\data\test\acc_audit.csv
+============================================================

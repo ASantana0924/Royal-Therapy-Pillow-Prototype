@@ -6,7 +6,7 @@
 #include <Adafruit_ADXL345_U.h>
 
 // ── Pin definitions ──────────────────────────────────────
-#define SD_CS       5
+#define SD_CS       4
 #define SDA_PIN     21
 #define SCL_PIN     22
 #define TARGET_HZ   100        // 50–100 Hz per spec

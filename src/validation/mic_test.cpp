@@ -7,7 +7,10 @@
 #include "../../src/logging/session.h"
 
 // ── Pin definitions ──────────────────────────────────────
-#define SD_CS         5
+#define SD_CS         4
+#define SD_SCK        18
+#define SD_MISO       19
+#define SD_MOSI       23
 #define SDA_PIN       21
 #define SCL_PIN       22
 #define PIN_BCLK      26
@@ -15,7 +18,7 @@
 #define I2S_DOUT      33
 
 // ── Audio config ─────────────────────────────────────────
-#define SAMPLE_RATE       16000  // per spec
+#define SAMPLE_RATE       16000
 #define BITS_PER_SAMPLE   16
 #define DMA_BUF_COUNT     16
 #define DMA_BUF_LEN       1024
@@ -35,17 +38,20 @@ float   hpf_prev_out        = 0.0f;
 int16_t stageBuf[STAGE_BUF_SAMPLES];
 int     stageBufIdx = 0;
 
+// ── Bench test duration ──────────────────────────────────
+#define BENCH_DURATION_MS  (1UL * 60UL * 1000UL)  // 1 minute
+
 // ── Session config ───────────────────────────────────────
 #define SEGMENT_DURATION_S  3600
 #define BYTES_PER_SAMPLE    2
 #define BYTES_PER_SECOND    (SAMPLE_RATE * BYTES_PER_SAMPLE)
 #define BYTES_PER_SEGMENT   ((uint32_t)BYTES_PER_SECOND * SEGMENT_DURATION_S)
 
-// ── Bench test duration ──────────────────────────────────
-#define BENCH_DURATION_MS  (1UL * 60UL * 1000UL)  // 1 minute
-
 const char* NIGHT = "n00";
 const char* UNIT  = "01";
+
+// ── I2S installed flag ────────────────────────────────────
+bool i2sInstalled = false;
 
 // ── Globals ──────────────────────────────────────────────
 RTC_DS3231 rtc;
@@ -89,13 +95,57 @@ void buildIndexFilename(DateTime dt, char* buf, size_t len) {
   );
 }
 
-// ── SD remount ───────────────────────────────────────────
+// ── Peripheral teardown ───────────────────────────────────
+void teardownPeripherals() {
+  if (i2sInstalled) {
+    i2s_driver_uninstall(I2S_NUM_0);
+    i2sInstalled = false;
+  }
+  SD.end();
+  SPI.end();
+
+  // Return SPI pins to known idle state for next sketch
+  pinMode(SD_CS,   OUTPUT); digitalWrite(SD_CS,   HIGH);
+  pinMode(SD_SCK,  OUTPUT); digitalWrite(SD_SCK,  HIGH);
+  pinMode(SD_MOSI, OUTPUT); digitalWrite(SD_MOSI, HIGH);
+  pinMode(SD_MISO, INPUT);
+
+  Serial.println("Peripherals torn down — safe to power down or reflash.");
+}
+
+// ── SD mount with retry ───────────────────────────────────
+bool mountSD() {
+  // Force all SPI pins to known idle state
+  // Clears residual state from previous sketches or boot process
+  pinMode(SD_CS,   OUTPUT); digitalWrite(SD_CS,   HIGH);
+  pinMode(SD_SCK,  OUTPUT); digitalWrite(SD_SCK,  HIGH);
+  pinMode(SD_MOSI, OUTPUT); digitalWrite(SD_MOSI, HIGH);
+  pinMode(SD_MISO, INPUT);
+  delay(1000);
+
+  SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+
+  for (int attempt = 1; attempt <= 5; attempt++) {
+    Serial.printf("SD mount attempt %d/5...\n", attempt);
+    if (SD.begin(SD_CS, SPI, 4000000)) {
+      Serial.println("microSD OK");
+      return true;
+    }
+    Serial.println("Mount failed — retrying in 2 seconds.");
+    SD.end();
+    delay(2000);
+    SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  }
+  return false;
+}
+
+// ── SD remount after error ────────────────────────────────
 bool remountSD() {
   Serial.println("WARN — SD error, attempting remount...");
   SD.end();
   delay(1000);
-  SPI.begin(18, 19, 23, SD_CS);
-  if (!SD.begin(SD_CS, SPI, 2000000)) {
+  SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  if (!SD.begin(SD_CS, SPI, 4000000)) {
     Serial.println("FAIL — SD remount failed.");
     return false;
   }
@@ -176,6 +226,7 @@ void initI2S() {
   i2s_driver_install(I2S_NUM_0, &cfg, 0, NULL);
   i2s_set_pin(I2S_NUM_0, &pins);
   i2s_zero_dma_buffer(I2S_NUM_0);
+  i2sInstalled = true;
 }
 
 // ── Open new WAV segment ──────────────────────────────────
@@ -195,7 +246,9 @@ void openNewSegment(DateTime dt) {
   }
 
   segmentBytesWritten = 0;
-  stageBufIdx        = 0;
+  stageBufIdx         = 0;
+  hpf_prev_in         = 0.0f;
+  hpf_prev_out        = 0.0f;
 
   char wavName[60];
   buildWavFilename(dt, hourIndex, wavName, sizeof(wavName));
@@ -204,6 +257,7 @@ void openNewSegment(DateTime dt) {
   if (!wavFile) {
     Serial.print("FAIL — could not open WAV: ");
     Serial.println(wavName);
+    teardownPeripherals();
     while (true);
   }
 
@@ -234,20 +288,19 @@ void setup() {
   // ── RTC ─────────────────────────────────────────────────
   if (!rtc.begin()) {
     Serial.println("FAIL — DS3231 not found.");
+    teardownPeripherals();
     while (true);
   }
   waitForTimeSync(rtc, 10000);
   DateTime now = rtc.now();
   sessionStartEpoch = now.unixtime();
 
-  // ── microSD — 2 MHz for sustained write stability ────────
-  delay(500);
-  SPI.begin(18, 19, 23, SD_CS);
-  if (!SD.begin(SD_CS, SPI, 2000000)) {
-    Serial.println("FAIL — microSD not mounted.");
+  // ── microSD — init BEFORE I2S, with pin reset ────────────
+  if (!mountSD()) {
+    Serial.println("FAIL — microSD not mounted after 5 attempts.");
+    teardownPeripherals();
     while (true);
   }
-  Serial.println("microSD init OK");
 
   // ── Index CSV ────────────────────────────────────────────
   char indexName[60];
@@ -255,15 +308,16 @@ void setup() {
   indexFile = SD.open(indexName, FILE_WRITE);
   if (!indexFile) {
     Serial.println("FAIL — could not open index CSV.");
+    teardownPeripherals();
     while (true);
   }
   indexFile.println("file_name,ts_iso_start,ts_epoch_ms_start,duration_s,sample_rate_hz");
   indexFile.flush();
   Serial.print("Index file: "); Serial.println(indexName);
 
-  // ── I2S ──────────────────────────────────────────────────
+  // ── I2S — init AFTER SD ───────────────────────────────
   initI2S();
-  Serial.println("I2S init OK");
+  Serial.println("I2S OK");
 
   // ── Open first segment ───────────────────────────────────
   openNewSegment(now);
@@ -272,7 +326,7 @@ void setup() {
 }
 
 void loop() {
-  // ── Bench test stop after 1 minute ───────────────────────
+  // ── Bench test stop ───────────────────────────────────────
   if (millis() > BENCH_DURATION_MS) {
     if (stageBufIdx > 0 && wavFile) {
       wavFile.write((uint8_t*)stageBuf,
@@ -284,6 +338,7 @@ void loop() {
     wavFile.flush();
     wavFile.close();
     indexFile.close();
+
     uint32_t elapsed = rtc.now().unixtime() - sessionStartEpoch;
     float mb = segmentBytesWritten / 1048576.0;
     Serial.println();
@@ -291,8 +346,9 @@ void loop() {
     Serial.println("Bench test complete.");
     Serial.printf("Duration:  %lu s\n", elapsed);
     Serial.printf("WAV size:  %.2f MB\n", mb);
-    Serial.println("Safe to power down.");
     Serial.println("=============================");
+
+    teardownPeripherals();
     while (true);
   }
 
@@ -308,20 +364,14 @@ void loop() {
   for (int i = 0; i < monoSamples; i++) {
     int32_t raw = (rawBuf[i * 2] >> 8);
 
-    // High pass filter
     float in  = (float)raw;
     float out = HPF_ALPHA * (hpf_prev_out + in - hpf_prev_in);
     hpf_prev_in  = in;
     hpf_prev_out = out;
 
-    // Gain
     int32_t sample = (int32_t)(out * GAIN_FACTOR);
-
-    // Clamp to 16-bit
     if (sample > 32767)  sample = 32767;
     if (sample < -32768) sample = -32768;
-
-    // Noise gate
     if (abs(sample) < NOISE_GATE_THRESHOLD) sample = 0;
 
     if (stageBufIdx < STAGE_BUF_SAMPLES) {
@@ -340,7 +390,6 @@ void loop() {
         Serial.println("WARN — write incomplete, attempting recovery...");
         wavFile.flush();
         wavFile.close();
-
         if (remountSD()) {
           char wavName[60];
           buildWavFilename(rtc.now(), hourIndex - 1,

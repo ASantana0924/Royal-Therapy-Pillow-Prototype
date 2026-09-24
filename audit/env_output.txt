@@ -1,0 +1,63 @@
+============================================================
+ENV STREAM AUDIT — ALL NIGHTS
+============================================================
+
+Auditing n01 (3-layer memory foam)...
+  File:              PILLOW_01_20260913_ENV_n01.csv
+  File size:         1,713,687 bytes
+  Rows (total):      25,200
+  Rows (clean):      25,200 (100.0% of 25,200)
+  Duration:          25199s (7.00 hrs)
+
+  ── Timestamp quality ──────────────────
+  Mean gap:          1.000s
+  Max gap:           1.001s
+  Gaps >2s:          0
+  Backward jumps:    0  OK
+  Corrupt ISO rows:  0  OK
+  Corrupt epoch rows:0  (0.00%)  OK
+
+  ── Temperature ────────────────────────
+  Min/Max:           25.89 / 28.73 C (OK)
+  Mean / Std:        26.89 / 0.622 C
+  Range:             2.84 C
+  Trend:             -0.0847 C/hr
+
+  ── Humidity ───────────────────────────
+  Min/Max:           40.39 / 57.59 % (OK)
+  Mean / Std:        45.14 / 2.706 %
+  Range:             17.20 %
+  Trend:             -0.8680 %/hr
+
+  ── Pressure ───────────────────────────
+  Mean:              1017.34 hPa
+  Range:             2.43 hPa (stable)
+
+  ── Gas resistance ─────────────────────
+  Zero %:            0.0%
+  Valid rows (>100O):25,200
+  Gas mean:          178,091 O
+  Gas min/max:       78,842 / 186,656 O
+
+  IAQ cols present:  True
+  IAQ all blank:     True
+
+  Status:            OK
+  Notes:             Temp flatline >10 min detected
+
+============================================================
+ENV PER-PILLOW COMPARISON
+============================================================
+
+3-layer memory foam (nights: n01)
+  Avg clean rows:          25,200
+  Avg corrupt epoch rows:  0
+  Avg corrupt epoch %:     0.00%
+  Avg temp mean:           26.89 C
+  Avg temp trend:          -0.0847 C/hr
+  Avg humidity mean:       45.14 %
+  Avg gas valid rows:      25200
+  Avg gas mean (valid):    178,091 O
+
+ENV audit saved to: C:\Users\aleja\Royal Therapy\pillow-prototype\data\test\env_audit.csv
+============================================================
