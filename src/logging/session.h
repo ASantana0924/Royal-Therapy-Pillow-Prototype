@@ -11,7 +11,7 @@ RTC_DS3231* _rtc_ptr = nullptr;
 
 // ── Session config ────────────────────────────────────────
 #define UNIT_ID           "01"
-#define FW_VERSION        "1.0.0"
+#define FW_VERSION        "1.1.0"
 #define SENSOR_RATE_ACC   100
 #define SENSOR_RATE_ENV   1
 #define SENSOR_RATE_MIC   16000
@@ -106,6 +106,113 @@ void writeMetaJSON(DateTime dt, const char* night,
 
   Serial.print("meta.json written: ");
   Serial.println(filename);
+}
+
+// ── Session config from SD card ───────────────────────────
+// Reads /session.cfg from the SD card root.
+// Format — one key=value per line, no quotes:
+//   NIGHT=n23
+//   PILLOW_MODEL=hotel gel microfiber
+//   ROOM_TEMP=23.5
+//   CONDITIONS=no partner present, window closed, fan on
+//   PLACEMENT=sensor at pillow top edge ~10 cm from head
+//   NOTES=
+//
+// Missing keys fall back to the defaults defined below.
+// Edit on the SD card in Notepad before each night.
+// No reflashing needed.
+
+struct SessionConfig {
+  char night[16];
+  char pillow_model[64];
+  float room_temp_c;
+  char conditions[128];
+  char placement[128];
+  char notes[128];
+};
+
+static void trimStr(char* s) {
+  int start = 0;
+  while (s[start] == ' ' || s[start] == '\t') start++;
+  if (start > 0) memmove(s, s + start, strlen(s) - start + 1);
+  int len = strlen(s);
+  while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t' ||
+                     s[len-1] == '\r' || s[len-1] == '\n')) {
+    s[--len] = '\0';
+  }
+}
+
+static void writeDefaultConfig() {
+  if (SD.exists("/session.cfg")) return;
+  File f = SD.open("/session.cfg", FILE_WRITE);
+  if (!f) {
+    Serial.println("WARN: could not create default session.cfg");
+    return;
+  }
+  f.println("# Pillow Sensor Session Configuration");
+  f.println("# Edit this file on the SD card before each night.");
+  f.println("# Lines starting with # are comments.");
+  f.println("#");
+  f.println("NIGHT=n01");
+  f.println("PILLOW_MODEL=hotel gel microfiber");
+  f.println("ROOM_TEMP=23.0");
+  f.println("CONDITIONS=no partner present, window closed, fan off");
+  f.println("PLACEMENT=environment sensor at pillow top edge under pillow cover ~10 cm from head");
+  f.println("NOTES=");
+  f.flush();
+  f.close();
+  Serial.println("Created default session.cfg on SD card.");
+}
+
+static SessionConfig readSessionConfig() {
+  SessionConfig cfg;
+  // Defaults — used if session.cfg missing or a key is absent
+  strncpy(cfg.night,        "n01",                                sizeof(cfg.night)        - 1);
+  strncpy(cfg.pillow_model, "hotel gel microfiber",               sizeof(cfg.pillow_model) - 1);
+  cfg.room_temp_c = 23.0f;
+  strncpy(cfg.conditions,   "no partner present",                 sizeof(cfg.conditions)   - 1);
+  strncpy(cfg.placement,    "sensor at pillow top edge ~10cm",    sizeof(cfg.placement)    - 1);
+  strncpy(cfg.notes,        "",                                   sizeof(cfg.notes)        - 1);
+
+  writeDefaultConfig();
+
+  File f = SD.open("/session.cfg", FILE_READ);
+  if (!f) {
+    Serial.println("WARN: session.cfg not found, using defaults.");
+    return cfg;
+  }
+
+  Serial.println("Reading session.cfg...");
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    char buf[256];
+    line.toCharArray(buf, sizeof(buf));
+    trimStr(buf);
+
+    if (buf[0] == '#' || buf[0] == '\0') continue;
+
+    char* eq = strchr(buf, '=');
+    if (!eq) continue;
+    *eq = '\0';
+    char* key = buf;
+    char* val = eq + 1;
+    trimStr(key);
+    trimStr(val);
+
+    if      (strcmp(key, "NIGHT")        == 0) strncpy(cfg.night,        val, sizeof(cfg.night)        - 1);
+    else if (strcmp(key, "PILLOW_MODEL") == 0) strncpy(cfg.pillow_model, val, sizeof(cfg.pillow_model) - 1);
+    else if (strcmp(key, "ROOM_TEMP")    == 0) cfg.room_temp_c = atof(val);
+    else if (strcmp(key, "CONDITIONS")   == 0) strncpy(cfg.conditions,   val, sizeof(cfg.conditions)   - 1);
+    else if (strcmp(key, "PLACEMENT")    == 0) strncpy(cfg.placement,    val, sizeof(cfg.placement)    - 1);
+    else if (strcmp(key, "NOTES")        == 0) strncpy(cfg.notes,        val, sizeof(cfg.notes)        - 1);
+  }
+  f.close();
+
+  Serial.printf("  Night:   %s\n",     cfg.night);
+  Serial.printf("  Pillow:  %s\n",     cfg.pillow_model);
+  Serial.printf("  Temp:    %.1f C\n", cfg.room_temp_c);
+  Serial.printf("  Cond:    %s\n",     cfg.conditions);
+  return cfg;
 }
 
 // ── Serial time sync ──────────────────────────────────────

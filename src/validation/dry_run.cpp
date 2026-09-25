@@ -42,12 +42,19 @@
 
 // -------------------- Session configuration -----------------
 // Update these before each planned night.
-static const char* NIGHT        = "n01";
-static const char* PILLOW_MODEL = "3-layer memory foam";
-static const float ROOM_TEMP    = 24.0f;
-static const char* CONDITIONS   = "no partner present, window closed, fan off";
-static const char* PLACEMENT    = "Environment sensor in between middle and top layer near the side of the pillow ~10 cm from head";
-static const char* NOTES        = "";
+// Session config — loaded from /session.cfg on the SD card at startup.
+// Edit session.cfg in Notepad before each night. No reflashing needed.
+// Falls back to defaults if the file is missing.
+static SessionConfig sessionCfg;
+
+// Convenience accessors matching the old variable names so the rest
+// of the file compiles without changes.
+#define NIGHT        (sessionCfg.night)
+#define PILLOW_MODEL (sessionCfg.pillow_model)
+#define ROOM_TEMP    (sessionCfg.room_temp_c)
+#define CONDITIONS   (sessionCfg.conditions)
+#define PLACEMENT    (sessionCfg.placement)
+#define NOTES        (sessionCfg.notes)
 
 // 5-minute validation run. Change ONLY this value to perform the overnight test.
 // #define RUN_DURATION_MS (60UL * 60UL * 1000UL)
@@ -1156,6 +1163,9 @@ void setup() {
     Serial.println("FAIL — microSD mount failed.");
     while (true) delay(1000);
   }
+
+  // Load session config from SD card — must happen after mount
+  sessionCfg = readSessionConfig();
 
   // Never destroy existing raw data automatically.
   if (!ensureFreshSessionNames()) {
