@@ -80,6 +80,9 @@ static size_t stageBufIdx = 0;
 #define BYTES_PER_SAMPLE 2UL
 #define WAV_PATCH_INTERVAL_MS (30UL * 60UL * 1000UL)
 #define MIN_SEGMENT_REMAINING_MS (10UL * 60UL * 1000UL)
+// Flush the PCM file this often so the FAT directory entry (file size)
+// stays current. If power is cut, at most ~10 s of audio is lost.
+#define PCM_FLUSH_INTERVAL_MS 10000UL
 
 // -------------------- SD / startup ---------------------------
 #define SD_SPI_HZ 4000000
@@ -131,6 +134,7 @@ static uint8_t wavSegmentIndex = 0;
 static uint8_t wavSegmentsCompleted = 0;
 static uint32_t segmentBytesWritten = 0;
 static uint32_t segmentOpenMs = 0;
+static uint32_t lastPcmFlushMillis = 0;
 static uint64_t segmentStartEpochMs = 0;
 static uint32_t segmentStartMillis = 0;
 static uint32_t segmentStartSampleCount = 0;
@@ -353,47 +357,29 @@ static bool flushStageBuffer() {
 
   segmentBytesWritten += (uint32_t)bytes;
   stageBufIdx = 0;
+
+  // Without a flush, FAT keeps the file size at 0 until close.
+  // An early unplug would then leave a 0 KB file even though the
+  // audio bytes are on the card. Flush periodically to prevent that.
+  if ((uint32_t)(millis() - lastPcmFlushMillis) >= PCM_FLUSH_INTERVAL_MS) {
+    wavFile.flush();
+    lastPcmFlushMillis = millis();
+  }
   return true;
 }
 
 static bool closeCurrentWav(bool writeIndexRow) {
+  (void)writeIndexRow;  // index row is now written at segment open
   if (!wavFile) return true;
 
   flushStageBuffer();
 
   const uint32_t finalBytes = segmentBytesWritten;
   const uint32_t finalSamples = finalBytes / BYTES_PER_SAMPLE;
-  const uint64_t endEpochMs = getSessionEpochMs();
-  const uint64_t durationMs = (endEpochMs >= segmentStartEpochMs)
-                            ? (endEpochMs - segmentStartEpochMs) : 0;
 
-  // PCM — no header to patch. Just flush and close.
+  // PCM: no header to patch. Just flush and close.
   wavFile.flush();
   wavFile.close();
-  bool headerOk = true;
-
-  if (writeIndexRow && indexFile) {
-    char wavName[96];
-    char iso[32];
-    char startIso[32];
-    buildWavFilename(wavSegmentIndex, wavName, sizeof(wavName));
-    formatTimestamp(segmentStartEpochMs, startIso, sizeof(startIso));
-
-    // duration_s is based on actual samples written, not the planned 3600 s.
-    const double durationSeconds = (double)finalSamples / (double)SAMPLE_RATE;
-    char row[220];
-    snprintf(row, sizeof(row), "%s,%s,%llu,%.3f,%d",
-             wavName + 1,
-             startIso,
-             (unsigned long long)segmentStartEpochMs,
-             durationSeconds,
-             SAMPLE_RATE);
-    if (indexFile.println(row) == 0) {
-      logWarn("Failed to write MIC index row.");
-    }
-    indexFile.flush();
-    (void)iso;
-  }
 
   Serial.printf("PCM h%02u closed: %.2f MB, %lu samples\n",
                 wavSegmentIndex,
@@ -401,7 +387,7 @@ static bool closeCurrentWav(bool writeIndexRow) {
                 (unsigned long)finalSamples);
 
   wavSegmentsCompleted++;
-  return headerOk;
+  return true;
 }
 
 static bool openWavSegment() {
@@ -431,6 +417,25 @@ static bool openWavSegment() {
   segmentStartEpochMs = getSessionEpochMs();
   segmentStartMillis = millis();
   segmentStartSampleCount = totalMicSamples;
+  lastPcmFlushMillis = millis();
+
+  // Write the MIC index row now, at segment open, so it exists even if
+  // the device is unplugged before the segment closes. duration_s is left
+  // blank and filled in by audit/pcm_to_wav.py from the file size.
+  if (indexFile) {
+    char startIso[32];
+    formatTimestamp(segmentStartEpochMs, startIso, sizeof(startIso));
+    char row[220];
+    snprintf(row, sizeof(row), "%s,%s,%llu,,%d",
+             wavName + 1,
+             startIso,
+             (unsigned long long)segmentStartEpochMs,
+             SAMPLE_RATE);
+    if (indexFile.println(row) == 0) {
+      logWarn("Failed to write MIC index row.");
+    }
+    indexFile.flush();
+  }
 
   // PCM — no header written. First byte is audio data.
   // File is valid from the moment it opens — no close dependency.
@@ -929,24 +934,24 @@ static bool writeFirstAccRow() {
 // Metadata
 // ============================================================
 
-static bool writeMetadataJson(uint64_t endEpochMs) {
-  // At this point ALL acquisition files must already be closed.
+static bool writeMetadataJson() {
+  // Written once at startup. Every field required by spec section 6 is
+  // known before logging begins, so the sidecar exists even if the
+  // device is unplugged early. Edit "notes" by hand after the night to
+  // record dropouts or events (spec section 7).
   char filename[96];
   buildMetaFilename(filename, sizeof(filename));
 
   File f = SD.open(filename, FILE_WRITE);
   if (!f) {
-    Serial.printf("FAIL — could not create meta.json: %s\n", filename);
+    Serial.printf("FAIL: could not create meta.json: %s\n", filename);
     return false;
   }
 
-  char startIso[32];
-  char endIso[32];
-  formatTimestamp(sessionStartEpochMs, startIso, sizeof(startIso));
-  formatTimestamp(endEpochMs, endIso, sizeof(endIso));
-
-  const uint64_t durationMs = (endEpochMs >= sessionStartEpochMs)
-                            ? endEpochMs - sessionStartEpochMs : 0;
+  // Clock-set time (spec section 3): session clock is anchored right
+  // after set_rtc.py runs, so this is the time the RTC was set.
+  char clockSetIso[32];
+  formatTimestamp(sessionStartEpochMs, clockSetIso, sizeof(clockSetIso));
 
   f.println("{");
   f.printf("  \"prototype\": \"PILLOW\",\n");
@@ -954,39 +959,19 @@ static bool writeMetadataJson(uint64_t endEpochMs) {
   f.printf("  \"session_date\": \"%04d-%02d-%02d\",\n", sessionYear, sessionMonth, sessionDay);
   f.printf("  \"night\": \"%s\",\n", NIGHT);
   f.printf("  \"firmware_version\": \"%s\",\n", FW_VERSION);
-  f.printf("  \"start_ts_iso\": \"%s\",\n", startIso);
-  f.printf("  \"end_ts_iso\": \"%s\",\n", endIso);
-  f.printf("  \"start_ts_epoch_ms\": %llu,\n", (unsigned long long)sessionStartEpochMs);
-  f.printf("  \"end_ts_epoch_ms\": %llu,\n", (unsigned long long)endEpochMs);
-  f.printf("  \"duration_s\": %.3f,\n", durationMs / 1000.0);
+  f.printf("  \"clock_set_ts_iso\": \"%s\",\n", clockSetIso);
 
   f.println("  \"sensors\": {");
   f.printf("    \"ADXL345\": {\"stream\": \"ACC\", \"rate_hz\": %d, \"range_g\": 16},\n", SENSOR_RATE_ACC);
   f.printf("    \"INMP441\": {\"stream\": \"MIC\", \"rate_hz\": %d, \"bits\": 16, \"channels\": 1, \"format\": \"pcm_s16le\"},\n", SENSOR_RATE_MIC);
-  f.printf("    \"BME688\": {\"stream\": \"ENV\", \"rate_hz\": %d, \"bsec\": false, \"async_measurement\": true}\n", SENSOR_RATE_ENV);
+  f.printf("    \"BME688\": {\"stream\": \"ENV\", \"rate_hz\": %d, \"bsec\": false}\n", SENSOR_RATE_ENV);
   f.println("  },");
 
   f.printf("  \"placement\": \"%s\",\n", PLACEMENT);
   f.printf("  \"pillow_model\": \"%s\",\n", PILLOW_MODEL);
   f.printf("  \"room_temp_c\": %.1f,\n", ROOM_TEMP);
   f.printf("  \"conditions\": \"%s\",\n", CONDITIONS);
-  f.printf("  \"notes\": \"%s\",\n", NOTES);
-
-  f.println("  \"quality\": {");
-  f.printf("    \"acc_rows\": %lu,\n", (unsigned long)accRowCount);
-  f.printf("    \"env_rows\": %lu,\n", (unsigned long)envRowCount);
-  f.printf("    \"mic_samples\": %lu,\n", (unsigned long)totalMicSamples);
-  f.printf("    \"acc_write_failures\": %lu,\n", (unsigned long)accWriteFailures);
-  f.printf("    \"acc_mutex_failures\": %lu,\n", (unsigned long)accMutexFailures);
-  f.printf("    \"env_read_failures\": %lu,\n", (unsigned long)envReadFailures);
-  f.printf("    \"env_mutex_failures\": %lu,\n", (unsigned long)envMutexFailures);
-  f.printf("    \"env_write_failures\": %lu,\n", (unsigned long)envWriteFailures);
-  f.printf("    \"mic_write_failures\": %lu,\n", (unsigned long)micWriteFailures);
-  f.printf("    \"audio_read_errors\": %lu,\n", (unsigned long)audioReadErrors);
-  f.printf("    \"wav_open_failures\": %lu\n", (unsigned long)wavOpenFailures);
-  f.println("  },");
-
-  f.printf("  \"wav_segments\": %u\n", (unsigned)wavSegmentsCompleted);
+  f.printf("  \"notes\": \"%s\"\n", NOTES);
   f.println("}");
   f.flush();
 
@@ -1053,8 +1038,6 @@ static void shutdownSession() {
   sessionRunning = false;
   stopEnvironmentTask();
 
-  const uint64_t endEpochMs = getSessionEpochMs();
-
   // Stop I2S before closing the WAV so no more audio is being acquired.
   if (i2sInstalled) {
     i2s_stop(I2S_NUM_0);
@@ -1062,8 +1045,6 @@ static void shutdownSession() {
 
   closeAllAcquisitionFiles();
 
-  // Metadata is deliberately written AFTER all acquisition files close.
-  const bool metaOk = writeMetadataJson(endEpochMs);
 
   if (i2sInstalled) {
     i2s_driver_uninstall(I2S_NUM_0);
@@ -1094,7 +1075,6 @@ static void shutdownSession() {
   Serial.printf("MIC write failures: %lu\n", (unsigned long)micWriteFailures);
   Serial.printf("Audio read errors: %lu\n", (unsigned long)audioReadErrors);
   Serial.printf("WAV open failures: %lu\n", (unsigned long)wavOpenFailures);
-  Serial.printf("Metadata: %s\n", metaOk ? "OK" : "FAILED");
   Serial.println("All acquisition files closed.");
   Serial.println("Session complete.");
 
@@ -1201,6 +1181,11 @@ void setup() {
   }
   Serial.println("MIC index ready");
 
+  // Write the metadata sidecar now so it exists even on an early unplug.
+  if (!writeMetadataJson()) {
+    Serial.println("WARN: meta.json could not be written. Continuing.");
+  }
+
   // Critical startup gate: ACC must produce an actual data row.
   if (!writeFirstAccRow()) {
     Serial.println("FAIL — first ACC row could not be written.");
@@ -1241,7 +1226,6 @@ void setup() {
 
   Serial.printf("ALL STREAMS LOGGING — %lu minute run\n",
                 RUN_DURATION_MS / 60000UL);
-  Serial.println("Metadata will be written after acquisition files close.");
   Serial.println("===============================================\n");
 }
 
