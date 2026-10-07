@@ -11,7 +11,7 @@ RTC_DS3231* _rtc_ptr = nullptr;
 
 // ── Session config ────────────────────────────────────────
 #define UNIT_ID           "01"
-#define FW_VERSION        "1.1.0"
+#define FW_VERSION        "1.2.0"
 #define SENSOR_RATE_ACC   100
 #define SENSOR_RATE_ENV   1
 #define SENSOR_RATE_MIC   16000
