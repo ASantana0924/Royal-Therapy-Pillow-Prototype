@@ -267,38 +267,40 @@ static bool verifyFileSize(File& f, size_t minimumBytes) {
   return f.size() >= minimumBytes;
 }
 
-// We deliberately do NOT delete old session files. Existing files are evidence.
-// If the requested name already exists, fail rather than destroying it.
-static bool ensureFreshSessionNames() {
+// If files for this night and date already exist on the card (for example
+// from a test run or a failed start), delete them so the session starts
+// clean. Returns false only if a file exists but could not be deleted.
+static bool removeIfExists(const char* fname) {
+  if (!SD.exists(fname)) return true;
+  if (SD.remove(fname)) {
+    Serial.printf("Removed existing file: %s\n", fname);
+    return true;
+  }
+  Serial.printf("FAIL: could not remove existing file: %s\n", fname);
+  return false;
+}
+
+static bool clearExistingSessionFiles() {
   char fname[96];
-  buildAccFilename(fname, sizeof(fname));
-  if (SD.exists(fname)) {
-    Serial.printf("FAIL — existing session file found: %s\n", fname);
-    return false;
-  }
-  buildEnvFilename(fname, sizeof(fname));
-  if (SD.exists(fname)) {
-    Serial.printf("FAIL — existing session file found: %s\n", fname);
-    return false;
-  }
-  buildIndexFilename(fname, sizeof(fname));
-  if (SD.exists(fname)) {
-    Serial.printf("FAIL — existing session file found: %s\n", fname);
-    return false;
-  }
-  buildMetaFilename(fname, sizeof(fname));
-  if (SD.exists(fname)) {
-    Serial.printf("FAIL — existing metadata file found: %s\n", fname);
-    return false;
-  }
+  bool ok = true;
+
+  buildAccFilename(fname, sizeof(fname));   ok &= removeIfExists(fname);
+  buildEnvFilename(fname, sizeof(fname));   ok &= removeIfExists(fname);
+  buildIndexFilename(fname, sizeof(fname)); ok &= removeIfExists(fname);
+  buildMetaFilename(fname, sizeof(fname));  ok &= removeIfExists(fname);
+
   for (uint8_t i = 0; i < 10; ++i) {
-    buildWavFilename(i, fname, sizeof(fname));
-    if (SD.exists(fname)) {
-      Serial.printf("FAIL — existing WAV found: %s\n", fname);
-      return false;
+    buildWavFilename(i, fname, sizeof(fname));  // .pcm segment
+    ok &= removeIfExists(fname);
+
+    // Also remove a .wav with the same name if one was left on the card
+    char* dot = strrchr(fname, '.');
+    if (dot) {
+      strcpy(dot, ".wav");
+      ok &= removeIfExists(fname);
     }
   }
-  return true;
+  return ok;
 }
 
 // ============================================================
@@ -1147,10 +1149,9 @@ void setup() {
   // Load session config from SD card — must happen after mount
   sessionCfg = readSessionConfig();
 
-  // Never destroy existing raw data automatically.
-  if (!ensureFreshSessionNames()) {
-    Serial.println("FAIL — session filenames already exist.");
-    Serial.println("Change NIGHT/session configuration or use a clean SD card.");
+  // Overwrite any existing files for this night and date.
+  if (!clearExistingSessionFiles()) {
+    Serial.println("FAIL: existing session files could not be removed.");
     SD.end();
     while (true) delay(1000);
   }
