@@ -82,7 +82,7 @@ static size_t stageBufIdx = 0;
 #define MIN_SEGMENT_REMAINING_MS (10UL * 60UL * 1000UL)
 // Flush the PCM file this often so the FAT directory entry (file size)
 // stays current. If power is cut, at most ~10 s of audio is lost.
-#define PCM_FLUSH_INTERVAL_MS 10000UL
+#define PCM_FLUSH_INTERVAL_MS 30000UL
 
 // -------------------- SD / startup ---------------------------
 #define SD_SPI_HZ 4000000
